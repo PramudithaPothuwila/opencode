@@ -2,7 +2,7 @@ import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect
 import type { Context } from "@opencode/plugin/effect/plugin"
 import { define } from "@opencode/plugin/effect/plugin"
 // import { Deferred, Duration, Effect, Option, Schema, Semaphore, Stream } from "effect"
-import { Deferred, Effect, Equal, Option, Schema, Semaphore } from "effect"
+import { Deferred, Effect, Equal, Exit, Option, Schema, Semaphore } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import type { Server, ServerResponse } from "node:http"
 import { App } from "../../app.js"
@@ -17,6 +17,7 @@ import { SessionAffinity } from "../../session/affinity.js"
 import type { PluginInternal } from "../internal.js"
 import { configuredSettings } from "./configured.js"
 import { storedCredential } from "./credential-settings.js"
+import { OpenAISubscriptionModels } from "./openai-subscription-models.js"
 import { ProviderRefresh } from "./refresh.js"
 
 // First-time sign-in registers a user-owned client; OpenAI returns its issued client ID on the callback.
@@ -31,9 +32,8 @@ const providerID = Provider.ID.openai
 const integrationID = Integration.ID.make("openai")
 const methodID = Integration.MethodID.make("chatgpt-token-sharing")
 const modelCacheKey = (clientID: string) => `models:${clientID}`
+// Used when the catalog has no Sign in with ChatGPT list. gpt-5.5 is rejected there.
 const fallbackModels = new Set([
-  "gpt-5.5",
-  "gpt-5.5-fast",
   "gpt-5.6-luna",
   "gpt-5.6-luna-fast",
   "gpt-5.6-sol",
@@ -91,6 +91,9 @@ type RemoteModel = typeof RemoteModel.Type
 const RemoteModels = Schema.Struct({ models: Schema.Array(RemoteModel) })
 const decodeCachedModels = Schema.decodeUnknownOption(Schema.Array(RemoteModel))
 
+const decodeInvalidGrant = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ error: Schema.Literal("invalid_grant") })),
+)
 const decodeMetadata = Schema.decodeUnknownOption(
   Schema.Struct({
     clientID: Schema.String,
@@ -129,7 +132,7 @@ const signIn = (app: App.Info, savedClientID: () => string | undefined, storage:
           const error = url.searchParams.get("error_description") ?? url.searchParams.get("error")
           const authorizationCode = url.searchParams.get("code")
           if (error) {
-            Effect.runFork(Deferred.fail(received, new Error(error)))
+            Deferred.doneUnsafe(received, Exit.fail(new Error(error)))
             response
               .writeHead(400, { "Content-Type": "text/html" })
               .end(OauthCallbackPage.error(error, { provider: "ChatGPT" }))
@@ -137,15 +140,16 @@ const signIn = (app: App.Info, savedClientID: () => string | undefined, storage:
           }
           if (!authorizationCode || url.searchParams.get("state") !== state) {
             const message = authorizationCode ? "Invalid OAuth state" : "Missing authorization code"
-            Effect.runFork(Deferred.fail(received, new Error(message)))
+            Deferred.doneUnsafe(received, Exit.fail(new Error(message)))
             response
               .writeHead(400, { "Content-Type": "text/html" })
               .end(OauthCallbackPage.error(message, { provider: "ChatGPT" }))
             return
           }
           if (
-            !Effect.runSync(
-              Deferred.succeed(received, {
+            !Deferred.doneUnsafe(
+              received,
+              Exit.succeed({
                 code: authorizationCode,
                 clientID: url.searchParams.get("client_id") ?? undefined,
                 response,
@@ -271,6 +275,8 @@ export const ChatGPTPlugin = define({
       { discard: true },
     )
     yield* load()
+    // Temporary: the Sign in with ChatGPT list from models.dev, see openai-subscription-models.ts.
+    const plan = yield* OpenAISubscriptionModels.track("openai-chatgpt", ctx.provider.reload())
     yield* ctx.session.hook(
       "retry",
       (event) =>
@@ -317,7 +323,7 @@ export const ChatGPTPlugin = define({
         // models: available
         //   ? deriveModels(available, Array.from(item.models.values()))
         //   : Array.from(item.models.values()).filter((model) => fallbackModels.has(model.id)),
-        models: Array.from(item.models.values()).filter((model) => fallbackModels.has(model.id)),
+        models: Array.from(item.models.values()).filter((model) => (plan.current ?? fallbackModels).has(model.id)),
         sourceConnection: source,
       })
     })
@@ -399,21 +405,25 @@ function exchange(code: string, clientID: string, redirect: string, pkce: Pkce, 
   })
 }
 
-function refresh(value: Credential.OAuth, app: App.Info) {
+export function refresh(value: Credential.OAuth, app: App.Info, url = tokenURL) {
   return Effect.gen(function* () {
     const metadata = Option.getOrUndefined(decodeMetadata(value.metadata))
     if (!metadata)
       return yield* Effect.fail(new Error("This ChatGPT connection has no registered client ID. Connect again."))
-    const tokens = yield* request<TokenResponse>(tokenURL, {
-      method: "POST",
-      headers: headers(app),
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        client_id: metadata.clientID,
-        refresh_token: value.refresh,
-        resource,
-      }).toString(),
-    })
+    const tokens = yield* request<TokenResponse>(
+      url,
+      {
+        method: "POST",
+        headers: headers(app),
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          client_id: metadata.clientID,
+          refresh_token: value.refresh,
+          resource,
+        }).toString(),
+      },
+      "This ChatGPT sign-in has expired or was revoked. Connect again.",
+    )
     return credential(tokens, metadata.clientID, metadata.scopes)
   })
 }
@@ -519,12 +529,14 @@ export function verifyIDToken(
   })
 }
 
-function request<A>(url: string, init: RequestInit) {
+// `rejected` replaces the error when OpenAI answers invalid_grant, which means different things per grant type.
+function request<A>(url: string, init: RequestInit, rejected?: string) {
   return Effect.tryPromise({
     try: async (signal) => {
       const response = await fetch(url, { ...init, signal })
-      if (!response.ok) throw new Error(`Request failed: ${response.status}`)
-      return response.json() as Promise<A>
+      if (response.ok) return response.json() as Promise<A>
+      if (rejected && Option.isSome(decodeInvalidGrant(await response.text()))) throw new Error(rejected)
+      throw new Error(`Request failed: ${response.status}`)
     },
     catch: (cause) => cause,
   })

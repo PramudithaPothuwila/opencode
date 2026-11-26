@@ -11,7 +11,7 @@ import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 export type SessionSummary = Pick<SessionInfo, "id" | "parentID" | "title" | "time">
 
 type ProviderCatalog = {
-  all: Map<string, { models: Record<string, { name: string }> }>
+  all: Map<string, { models: Record<string, { name: string; speed?: { base: string; id: string } }> }>
   default: {
     [key: string]: string
   }
@@ -79,6 +79,8 @@ export const {
     peekMedia?: PeekMediaUrlFn
     onNavigateToSession?: NavigateToSessionFn
     onSessionHref?: SessionHrefFn
+    /** Resolved feature flags of the session's location, from the server's experimental flag endpoint. */
+    flags?: Readonly<Record<string, boolean>>
   }) => {
     return {
       get store() {
@@ -92,6 +94,13 @@ export const {
       },
       get agents() {
         return props.agents ?? true
+      },
+      get flags() {
+        return props.flags
+      },
+      /** Whether the server reports `key` on for the session's location; off when unknown. */
+      flag(key: string) {
+        return props.flags?.[key] === true
       },
       navigateToSession: props.onNavigateToSession,
       sessionHref: props.onSessionHref,
