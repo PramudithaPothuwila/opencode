@@ -5,6 +5,7 @@ import { defineConfig, type Plugin, type UserConfig } from "vite"
 import solid from "vite-plugin-solid"
 import { nodeExecArgv, nodeTarget, type NodeTarget, photonWasmAsset } from "./src/node/target"
 import { verifySimulationGraph } from "./script/verify-artifact"
+import { cortexDefines, type cortexMetadata } from "./script/cortex"
 
 const dir = import.meta.dirname
 
@@ -252,6 +253,7 @@ export type NodeBuildInput = {
   readonly channel: string
   readonly highlights?: string
   readonly modelsSnapshot?: string
+  readonly cortex?: Awaited<ReturnType<typeof cortexMetadata>>
   readonly assetHash: string
   readonly target: NodeTarget
 }
@@ -275,6 +277,7 @@ export function mainConfig(input: NodeBuildInput): UserConfig {
     resolve,
     esbuild: { jsx: "automatic" },
     define: {
+      ...(input.cortex ? cortexDefines(input.cortex) : {}),
       OPENCODE_VERSION: JSON.stringify(input.version),
       OPENCODE_CLI_NAME: JSON.stringify("opencode2-node"),
       OPENCODE_CHANNEL: JSON.stringify(input.channel),

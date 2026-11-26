@@ -13,6 +13,7 @@ import { collectNodeAssets, copyNodeAssets, hashNodeAssets, seaAssetMap } from "
 import { appArchiveAsset, mainConfig } from "../vite.node.config"
 import { nodeExecArgv, nodeTarget, type NodeTarget } from "../src/node/target"
 import { buildAppArchive } from "./app-assets"
+import { cortexMetadata } from "./cortex"
 import { verifyArtifact } from "./verify-artifact"
 import { NativeArch } from "../../../script/native-arch"
 import { bundledModelsSnapshot } from "../../core/script/models-snapshot"
@@ -63,8 +64,11 @@ if (targets.length === 0) {
 if (!bundleOnly && targets.some((target) => target.platform === "darwin" && target.arch === "x64")) {
   throw new Error("Node 26.4 SEA does not support macOS x64")
 }
+const cortex = await cortexMetadata()
 const modelsSnapshot = await bundledModelsSnapshot()
-const appArchive = archivePath ? await Bun.file(archivePath).bytes() : await buildAppArchive(Script.channel, Script.version)
+const appArchive = archivePath
+  ? await Bun.file(archivePath).bytes()
+  : await buildAppArchive(Script.channel, Script.version)
 if (!bundleOnly) await rm(outdir, { recursive: true, force: true })
 const builder =
   !bundleOnly || targets.some((target) => target.platform === process.platform && target.arch === process.arch)
@@ -100,6 +104,7 @@ for (const target of targets) {
     channel: Script.channel,
     highlights,
     modelsSnapshot,
+    cortex,
     assetHash,
     target,
   }

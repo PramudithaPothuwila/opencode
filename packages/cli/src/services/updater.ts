@@ -1,3 +1,4 @@
+import { CORTEX_BUILD } from "../cortex"
 import { Global } from "@opencode/util/global"
 import { AppProcess } from "@opencode/util/process"
 import { EffectFlock } from "@opencode/util/effect-flock"
@@ -39,6 +40,16 @@ export class UpgradeError extends Error {
     this.command = input.command
     this.retry = input.retry
   }
+}
+
+const cortexMessage = "Cortex cannot use the official OpenCode updater. Rebuild Cortex from its source to update."
+
+export function cortexUpgradeError() {
+  return new UpgradeError({
+    title: "Cortex updates unavailable",
+    detail: cortexMessage,
+    retry: "Rebuild Cortex from its source.",
+  })
 }
 
 const decodeVpPackages = Schema.decodeUnknownOption(
@@ -257,7 +268,10 @@ const make = Effect.gen(function* () {
     if (installedWinget) return "winget"
     if (!installedPackage || installedOwner) return
 
-    const parts = executable.toLowerCase().split(path.sep).map((part) => part.replace(/^\./, ""))
+    const parts = executable
+      .toLowerCase()
+      .split(path.sep)
+      .map((part) => part.replace(/^\./, ""))
     const checks: Array<{ method: Method; command: string[] }> = [
       { method: "npm", command: [npm, "list", "-g", "--depth=0", ...npmPrefixArgs, installedPackage] },
       { method: "pnpm", command: ["pnpm", "list", "-g", "--depth=0", installedPackage] },
@@ -399,11 +413,13 @@ const make = Effect.gen(function* () {
   })
 
   const latest = (selected?: Method) =>
-    (selected ? Effect.succeed(selected) : method()).pipe(
-      Effect.flatMap((method) =>
-        method === "winget" ? wingetVersion() : release(method).pipe(Effect.map((data) => data.version)),
-      ),
-    )
+    CORTEX_BUILD
+      ? Effect.fail(cortexUpgradeError())
+      : (selected ? Effect.succeed(selected) : method()).pipe(
+          Effect.flatMap((method) =>
+            method === "winget" ? wingetVersion() : release(method).pipe(Effect.map((data) => data.version)),
+          ),
+        )
 
   const managedError = (owner: { name: string; command: string }, target: string) =>
     new UpgradeError({
@@ -416,6 +432,7 @@ const make = Effect.gen(function* () {
   const managedMessage = (error: UpgradeError) => `${error.title}. Update it with ${error.command}`
 
   const managed = Effect.fnUntraced(function* (input?: string) {
+    if (CORTEX_BUILD) return yield* Effect.fail(cortexUpgradeError())
     if (!installedOwner) return
     if (input !== undefined && !parseReleaseVersion(input))
       return yield* Effect.fail(new Error(`Invalid version: ${input}`))
@@ -481,6 +498,7 @@ const make = Effect.gen(function* () {
   }
 
   const upgrade = Effect.fnUntraced(function* (method: Method, input: string) {
+    if (CORTEX_BUILD) return yield* Effect.fail(cortexUpgradeError())
     if (!parseReleaseVersion(input)) return yield* Effect.fail(new Error(`Invalid version: ${input}`))
     const version = input.trim().replace(/^v/, "")
     const packageName =
@@ -648,6 +666,7 @@ const make = Effect.gen(function* () {
   })
 
   const apply = Effect.fn("cli.updater.apply")(function* (version: string) {
+    if (CORTEX_BUILD) return yield* Effect.fail(cortexUpgradeError())
     if (yield* install(version)) return
     const error = yield* managed(version)
     return yield* Effect.fail(
@@ -660,6 +679,7 @@ const make = Effect.gen(function* () {
   })
 
   const check = Effect.fn("cli.updater.check")(function* () {
+    if (CORTEX_BUILD) return { type: "unavailable" as const, message: cortexMessage }
     if (OPENCODE_LOCAL)
       return {
         type: "unavailable" as const,
@@ -694,6 +714,7 @@ const make = Effect.gen(function* () {
 
   const run = Effect.fn("cli.updater.run")(
     function* (onInstall: (version: string) => void = () => {}) {
+      if (CORTEX_BUILD) return undefined
       const result = yield* inspect()
       if (!result) return undefined
       if (result.policy === "notify") return { type: "available" as const, version: result.version }

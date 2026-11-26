@@ -50,6 +50,7 @@ const loggedArgs = args.map((arg, index) => (index < kept ? arg : "<redacted>"))
 
 const Handlers = Runtime.handlers(Commands, {
   $: () => import("./commands/handlers/default"),
+  version: () => import("./commands/handlers/version"),
   upgrade: () => import("./commands/handlers/upgrade"),
   uninstall: () => import("./commands/handlers/uninstall"),
   acp: () => import("./commands/handlers/acp"),

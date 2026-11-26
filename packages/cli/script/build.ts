@@ -11,6 +11,7 @@ import type { BunPlugin } from "bun"
 import pkg from "../package.json"
 import { discoverPluginRuntimeSpecifiers, pluginRuntimeLoaderCode } from "@opencode/plugin/runtime-modules"
 import { buildAppArchive } from "./app-assets"
+import { cortexDefines, cortexMetadata } from "./cortex"
 import { verifyArtifact, verifySimulationGraph } from "./verify-artifact"
 import { resolveOpencodePty } from "./opencode-pty"
 import { NativeArch } from "../../../script/native-arch"
@@ -36,6 +37,7 @@ const solidPlugin = createSolidTransformPlugin()
 const highlights = Script.preview ? undefined : embed(process.env.OPENCODE_RELEASE_NOTES)
 const releaseAssets = new Map<string, Promise<Map<string, string>>>()
 const modelsSnapshot = modelsSnapshotPlugin(await bundledModelsSnapshot())
+const cortex = cortexDefines(await cortexMetadata())
 
 const allTargets: {
   os: string
@@ -206,6 +208,7 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
       windows: {},
     },
     define: {
+      ...cortex,
       OPENCODE_VERSION: `'${Script.version}'`,
       OPENCODE_CLI_NAME: "'opencode'",
       OPENCODE_CHANNEL: `'${Script.channel}'`,

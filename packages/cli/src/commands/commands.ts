@@ -91,6 +91,13 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
     prompt: Flag.String("prompt").pipe(Flag.withDescription("Prompt to use"), Flag.optional),
   },
   commands: [
+    Spec.make("version", {
+      description: "Show version information",
+      params: {
+        detailed: Flag.Boolean("detailed").pipe(Flag.withDescription("Show build details"), Flag.withDefault(false)),
+        json: Flag.Boolean("json").pipe(Flag.withDescription("Output as JSON"), Flag.withDefault(false)),
+      },
+    }),
     Spec.make("upgrade", {
       description: "Upgrade OpenCode to the latest or a specific version",
       aliases: ["update"],

@@ -5,12 +5,14 @@ import { Runtime } from "../../framework/runtime"
 import { Updater } from "../../services/updater"
 import { handlePromptErrors } from "../../ui/prompt"
 import { OPENCODE_VERSION } from "../../version"
+import { CORTEX_BUILD } from "../../cortex"
 import { stripVTControlCharacters } from "node:util"
 
 export default Runtime.handler(
   Commands.commands.upgrade,
   Effect.fn("cli.upgrade")(
     function* (input) {
+      if (CORTEX_BUILD) return yield* Effect.fail(Updater.cortexUpgradeError())
       intro("Upgrade")
       const updater = yield* Updater.Service
       const method = Option.getOrUndefined(input.method) ?? (yield* updater.method())
